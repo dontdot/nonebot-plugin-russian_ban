@@ -8,6 +8,7 @@ requires-python = ">=3.12,<4.0.0"
 dependencies = [
     "nonebot2 (>=2.4.2,<3.0.0)",
     "nonebot-adapter-onebot (>=2.4.6,<3.0.0)",
+    "nonebot-plugin-user-perm>=0.2.0",
 ]
 
 

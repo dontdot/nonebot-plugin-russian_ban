@@ -1,3 +1,6 @@
+from pydantic import BaseModel
+from typing import Dict, List, Union
+
 zh_number = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 
 
@@ -26,3 +29,37 @@ def format_timedelta(seconds: int) -> str:
     if seconds > 0:
         result.append(f"{seconds} 秒")
     return "".join(result)
+
+
+class NapcatAPI(BaseModel):
+    uin: str
+    nick: str
+    shutUpTime: int
+
+class OnebotAPI(BaseModel):
+    user_id: int
+    nickname: str
+    shut_up_timestamp: int
+
+BanList = List[Union[NapcatAPI, OnebotAPI]]
+
+class Ban:
+    @staticmethod
+    def banlist(data: List[dict]) -> BanList:
+        result = []
+        for item in data:
+            if 'uin' in item:
+                result.append(NapcatAPI(**item))
+            elif 'user_id' in item:
+                result.append(OnebotAPI(**item))
+        return result
+    
+    @staticmethod
+    def banlist_to_list(data: List[dict]) -> BanList:
+        result = []
+        for item in data:
+            if 'uin' in item:
+                result.append(NapcatAPI(**item).__dict__)
+            elif 'user_id' in item:
+                result.append(OnebotAPI(**item).__dict__)
+        return result

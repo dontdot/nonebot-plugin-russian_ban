@@ -1,6 +1,8 @@
 import re
 import time
 import random
+import json
+from typing import List, Optional, Dict
 from nonebot.plugin import PluginMetadata
 from nonebot import on_startswith, on_command, on_notice, get_driver
 from nonebot.log import logger
@@ -10,13 +12,13 @@ from nonebot.typing import T_State
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, GROUP_ADMIN, GROUP_OWNER, GroupBanNoticeEvent
 from nonebot import require
 from nonebot.exception import MatcherException
+import time
 
-require("nonebot_plugin_apscheduler")
+from .utils import to_int, format_timedelta, Ban
 
-from nonebot_plugin_apscheduler import scheduler
+require("nonebot_plugin_user_perm")
 
-from .utils import to_int, format_timedelta
-
+import nonebot_plugin_user_perm as upm
 
 # 插件元数据
 __plugin_meta__ = PluginMetadata(
@@ -48,15 +50,17 @@ config = driver.config
 
 async def is_allowed(bot: Bot, event: GroupMessageEvent) -> bool:
     """
-    额外权限用户验证，需要在dovenv文件中添加 PERM_USERS :list
+    额外权限用户验证
     """
-    user_id = str(event.get_user_id())
-    if config.perm_users:
-        if user_id in config.perm_users:
+    user_id = event.get_user_id()
+    if item := await upm.get_users(event.group_id):
+        logger.info(f"{__name__}，的额外权限用户：{item}")
+        if user_id in item:
             return True
     return False
 
-any_permission = SUPERUSER | GROUP_ADMIN | GROUP_OWNER | Permission(is_allowed)
+
+any_permission = SUPERUSER | GROUP_ADMIN | GROUP_OWNER | Permission(upm.is_perm_user)
 
 ban = on_startswith("/禁言", permission=any_permission, priority=20)
 
@@ -92,7 +96,7 @@ async def _(bot: Bot, event: GroupMessageEvent):
 
 BanInfo = dict[int, tuple[str, float]]
 
-amnesty = on_startswith(("/解封", "解禁", "解除禁言"), permission=any_permission, priority=20)
+amnesty = on_startswith(("/解封", "/解禁", "解除禁言"), permission=any_permission, priority=20)
 
 
 @amnesty.handle()
@@ -105,11 +109,21 @@ async def _(bot: Bot, event: GroupMessageEvent, state: T_State):
         await amnesty.finish()
     else:
         now = time.time()
-        ban_info: BanInfo = {
-            member["user_id"]: (member["card"] or member["nickname"], shut_up_timestamp - now)
-            for member in await bot.get_group_member_list(group_id=event.group_id)
-            if (shut_up_timestamp := member["shut_up_timestamp"]) > now
-        }
+        res: list = await get_ban_count(bot, event)
+        ban_info = {}
+        if res and 'uin' in res[0]:
+            ban_info: BanInfo = {
+                member["uin"]: (member.get("cardName") or member.get("nick"), shutUpTime - now)
+                for member in res
+                if (shutUpTime := member["shutUpTime"]) > now
+            }
+        elif res and 'user_id' in res[0]:
+            logger.error('call_api请求失败使用onebotbot获取')
+            ban_info: BanInfo = {
+                member["user_id"]: (member.get("card") or member.get("nickname"), shut_up_timestamp - now)
+                for member in res
+                if (shut_up_timestamp := member["shut_up_timestamp"]) > now
+            }
         if not ban_info:
             await amnesty.finish("当前没有成员被禁言。")
         msg = []
@@ -154,7 +168,6 @@ async def _(event: GroupMessageEvent):
         states[event.group_id].switch = True
     else:
         states[event.group_id] = BanGameState(True)
-    ban_person[event.group_id] = BanCount()
     await switch_on.finish("自由轮盘已开启！")
 
 
@@ -168,11 +181,10 @@ async def _(bot: Bot, event: GroupMessageEvent):
         states[event.group_id].switch = False
     else:
         states[event.group_id] = BanGameState(False)
-    ban_person[event.group_id] = BanCount()
     await switch_off.finish("自由轮盘已关闭！")
 
 
-async def game_start_rule(event: GroupMessageEvent):
+async def game_start_rule(bot: Bot, event: GroupMessageEvent):
     return event.group_id in states and states[event.group_id].switch
 
 
@@ -188,9 +200,10 @@ game_start_tips = [
 
 
 @game_start.handle()
-async def _(event: GroupMessageEvent):
+async def _(bot: Bot, event: GroupMessageEvent):
+    if len(await get_ban_count(bot, event)) > 16:
+        await game_start_hell.finish("坟地已满，请稍后试试吧")    
     global states
-    print('发起游戏')
     if event.group_id in states:
         state = states[event.group_id]
     else:
@@ -223,7 +236,7 @@ async def _(bot: Bot, event: GroupMessageEvent):
         await hell_switch_on.finish('赌徒模式关闭')
 
 
-async def hell_start_rule(event: GroupMessageEvent):
+async def hell_start_rule(bot: Bot, event: GroupMessageEvent):
     return event.group_id in states and states[event.group_id].switch and states[event.group_id].hell_switch
 
 
@@ -253,14 +266,15 @@ async def hell_check(event: GroupMessageEvent):
                 t = t * 60
         return t
     except Exception as e:
-        print(e)
+        logger.error(e)
 
 
 @game_start_hell.handle()
-async def _(event: GroupMessageEvent):
+async def _(bot:Bot, event: GroupMessageEvent):
     try:
+        if len(await get_ban_count(bot, event)) > 16:
+            await game_start_hell.finish("坟地已满，请稍后试试吧")
         global states
-        print('发起地狱游戏')
         if not event.get_plaintext().strip():
             await game_start_hell.finish("时间不能为空")
         if event.group_id in states:
@@ -271,7 +285,6 @@ async def _(event: GroupMessageEvent):
         state.hell_duration = await hell_check(event) or 0
         if state.hell_duration > 2592000:
             await game_start_hell.finish("不能超过30天")
-        print(f"赌{state.hell_duration}")
         if state.st == 0:
             msg = "游戏开始！\n" + random.choice(game_start_tips)
         else:
@@ -281,7 +294,7 @@ async def _(event: GroupMessageEvent):
     except MatcherException:
         raise
     except Exception as e:
-        print(e)
+        logger.error(e)
 
 
 async def game_ready_rule(event: GroupMessageEvent):
@@ -311,14 +324,6 @@ async def _(event: GroupMessageEvent):
     await game_roll.finish("重新装弹！\n" + msg)
 
 
-class BanCount:
-    def __init__(self):
-        self.person_count: int = 0
-        self.times_count: list = []
-
-ban_person: dict[int, BanCount] = {}
-
-
 game_shot = on_command("开枪", permission=game_ready_rule, priority=4, block=True)
 game_shot_tips = [
     "——传来一声清脆的金属碰撞声。\n没有人知道子弹的位置。可是不论它转到了哪里，总是要响的。",
@@ -331,10 +336,6 @@ game_shot_tips = [
 
 @game_shot.handle()
 async def _(bot: Bot, event: GroupMessageEvent):
-    global ban_person
-    ban = ban_person[event.group_id]
-    if ban.person_count > 15 :
-        await game_shot.finish("坟地已满，请稍后试试吧")
     global states
     state = states[event.group_id]
     if state.star == 0:
@@ -367,51 +368,6 @@ async def _(bot: Bot, event: GroupMessageEvent):
         await game_shot.finish("继续！\n" + msg)
 
 
-@scheduler.scheduled_job("interval", seconds=10, id="check_ban")
-async def _set():
-    global ban_person
-    for group, ban in ban_person.items():
-        print(f"群<{group}>当前禁言人数：{ban.person_count} || {len(ban.times_count)} || {ban.times_count}")
-        times_count_list = ban.times_count
-        for onetime in times_count_list:
-            if ((now := time.time()) - onetime[1]) > onetime[2]:
-                times_count_list.remove(onetime)
-                ban.person_count -= 1
-        if ban.person_count == 0:
-            scheduler.pause_job("check_ban")
-
-
-
-group_notice = on_notice()
-
-@group_notice.handle()
-async def _notice(event: GroupBanNoticeEvent):
-    global ban_person
-    # 获取被禁言的用户ID
-    user_id = event.user_id
-    group_id = event.group_id
-    if group_id not in ban_person:
-        ban_person[group_id] = BanCount()
-    # 获取禁言时长（秒）
-    duration = event.duration
-    ban = ban_person[group_id]
-    if duration > 0:
-        # 该成员被禁言，将其记录到本地数据库或列表中
-        ban.person_count += 1
-        ban.times_count.append([user_id, time.time(), duration])
-        print(f"用户 {user_id} 被禁言 {duration} 秒")
-        if ban.person_count > 1:
-            scheduler.resume_job("check_ban")
-    else:
-        # 该成员被解除禁言，从本地记录中移除
-        ban.person_count -= 1
-        for one in ban.times_count:
-            if user_id == one[0]:
-                ban.times_count.remove(one)
-        print(f"用户 {user_id} 已被解除禁言")
-        if ban.person_count == 0:
-            scheduler.pause_job("check_ban")
-
 
 help = on_command("轮盘指令", priority=4, block=True)
 
@@ -432,4 +388,14 @@ async def ban_help(bot: Bot, event: GroupMessageEvent):
 
     await help.finish(msg)
 
+
+async def get_ban_count(bot: Bot, event: GroupMessageEvent|GroupBanNoticeEvent) :
+    try:
+        # 优先采用napcat-api获取群组禁言列表
+        user = await bot.call_api("get_group_shut_list", group_id=event.group_id)
+    except TypeError:
+        logger.error("使用napcat-api失败，将使用onebot适配器bot对象")
+        user = await bot.get_group_member_list(group_id=event.group_id)
+    user = Ban.banlist_to_list(user)
+    return user
 
