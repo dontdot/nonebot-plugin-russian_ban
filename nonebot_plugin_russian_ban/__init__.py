@@ -250,6 +250,7 @@ async def hell_check(event: GroupMessageEvent):
         if cmd_match is None:
             await ban.finish()
         t, unit = cmd_match.groups()
+        logger.info(f"检查赌徒自定义时间获取情况：{t, unit}")
         t = (to_int(t) or 5) if t else 5
         match unit:
             case "秒" | "s":
@@ -264,6 +265,7 @@ async def hell_check(event: GroupMessageEvent):
                 t = t * 2592000
             case _:
                 t = t * 60
+        logger.info(f"赌徒自定义时间检查；{t}")
         return t
     except Exception as e:
         logger.error(e)
