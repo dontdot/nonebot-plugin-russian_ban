@@ -1,10 +1,8 @@
 import re
 import time
 import random
-import json
-from typing import List, Optional, Dict
 from nonebot.plugin import PluginMetadata
-from nonebot import on_startswith, on_command, on_notice, get_driver
+from nonebot import on_startswith, on_command
 from nonebot.log import logger
 from nonebot.permission import SUPERUSER, Permission
 from nonebot.params import ArgPlainText
@@ -42,22 +40,6 @@ __plugin_meta__ = PluginMetadata(
     type="application",
     supported_adapters={"~onebot.v11"},
 )
-
-
-driver = get_driver()
-config = driver.config
-
-
-async def is_allowed(bot: Bot, event: GroupMessageEvent) -> bool:
-    """
-    额外权限用户验证
-    """
-    user_id = event.get_user_id()
-    if item := await upm.get_users(event.group_id):
-        logger.info(f"{__name__}，的额外权限用户：{item}")
-        if user_id in item:
-            return True
-    return False
 
 
 any_permission = SUPERUSER | GROUP_ADMIN | GROUP_OWNER | Permission(upm.is_perm_user)
