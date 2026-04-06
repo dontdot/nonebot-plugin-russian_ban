@@ -2,7 +2,7 @@ import re
 import time
 import random
 from nonebot.plugin import PluginMetadata
-from nonebot import on_startswith, on_command
+from nonebot import on_startswith, on_command, get_driver
 from nonebot.log import logger
 from nonebot.permission import SUPERUSER, Permission
 from nonebot.params import ArgPlainText
@@ -12,11 +12,12 @@ from nonebot import require
 from nonebot.exception import MatcherException
 import time
 
-from .utils import to_int, format_timedelta, Ban
+from .utils import to_int, format_timedelta, Ban, FileMange, BanGameState
 
 require("nonebot_plugin_user_perm")
 
 import nonebot_plugin_user_perm as upm
+
 
 # 插件元数据
 __plugin_meta__ = PluginMetadata(
@@ -41,6 +42,15 @@ __plugin_meta__ = PluginMetadata(
     supported_adapters={"~onebot.v11"},
 )
 
+
+drive = get_driver()
+
+@drive.on_startup
+async def _():
+    await FileMange.load()
+
+
+states = FileMange.states
 
 any_permission = SUPERUSER | GROUP_ADMIN | GROUP_OWNER | Permission(upm.is_perm_user)
 
@@ -128,18 +138,6 @@ async def _(bot: Bot, event: GroupMessageEvent, state: T_State, user_ids: str = 
     await amnesty.finish()
 
 
-class BanGameState:
-    def __init__(self, switch: bool = False):
-        self.switch: bool = switch
-        self.star = 0
-        self.st = 0
-        self.hell_switch: bool = False
-        self.hell_duration = 0
-
-
-states: dict[int, BanGameState] = {}
-
-
 switch_on = on_command("开启自由轮盘", aliases={"开启轮盘禁言"}, permission=any_permission, priority=5)
 
 
@@ -149,7 +147,8 @@ async def _(event: GroupMessageEvent):
     if event.group_id in states:
         states[event.group_id].switch = True
     else:
-        states[event.group_id] = BanGameState(True)
+        states[event.group_id] = BanGameState(switch=True)
+    await FileMange.save()
     await switch_on.finish("自由轮盘已开启！")
 
 
@@ -162,7 +161,8 @@ async def _(bot: Bot, event: GroupMessageEvent):
     if event.group_id in states:
         states[event.group_id].switch = False
     else:
-        states[event.group_id] = BanGameState(False)
+        states[event.group_id] = BanGameState(switch=False)
+    await FileMange.save()
     await switch_off.finish("自由轮盘已关闭！")
 
 
